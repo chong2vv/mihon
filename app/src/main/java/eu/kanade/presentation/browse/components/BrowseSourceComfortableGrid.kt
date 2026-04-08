@@ -25,6 +25,7 @@ fun BrowseSourceComfortableGrid(
     contentPadding: PaddingValues,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
+    selection: Set<Long> = emptySet(),
 ) {
     LazyVerticalGrid(
         columns = columns,
@@ -44,6 +45,7 @@ fun BrowseSourceComfortableGrid(
                 manga = manga,
                 onClick = { onMangaClick(manga) },
                 onLongClick = { onMangaLongClick(manga) },
+                isSelected = manga.id in selection,
             )
         }
 
@@ -60,8 +62,10 @@ private fun BrowseSourceComfortableGridItem(
     manga: Manga,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = onClick,
+    isSelected: Boolean = false,
 ) {
     MangaComfortableGridItem(
+        isSelected = isSelected,
         title = manga.title,
         coverData = MangaCover(
             mangaId = manga.id,

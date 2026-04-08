@@ -771,6 +771,8 @@
     <string name="set_chapter_settings_as_default">Set as default</string>
     <string name="no_chapters_error">No chapters found</string>
     <string name="are_you_sure">Are you sure?</string>
+    <string name="delete_manga_confirm">Are you sure you want to delete \"%s\"? This will permanently remove the local files.</string>
+    <string name="delete_mangas_confirm">Are you sure you want to delete %d selected entries? This will permanently remove the local files.</string>
     <string name="exclude_scanlators">Exclude scanlators</string>
     <string name="no_scanlators_found">No scanlators found</string>
     <string name="confirm_tracker_update">Update trackers to chapter %d?</string>

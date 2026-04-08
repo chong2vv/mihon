@@ -61,6 +61,12 @@ actual class LocalSource(
     @Suppress("PrivatePropertyName")
     private val LatestFilters = FilterList(OrderBy.Latest(context))
 
+    @Volatile
+    private var cachedMangaDirs: List<UniFile>? = null
+    @Volatile
+    private var cacheTimestamp: Long = 0L
+    private val cacheDuration: Long = 30_000L // 30 seconds
+
     override val name: String = context.stringResource(MR.strings.local_source)
 
     override val id: Long = ID
@@ -83,10 +89,7 @@ actual class LocalSource(
             0L
         }
 
-        var mangaDirs = fileSystem.getFilesInBaseDirectory()
-            // Filter out files that are hidden and is not a folder
-            .filter { it.isDirectory && !it.name.orEmpty().startsWith('.') }
-            .distinctBy { it.name }
+        var mangaDirs = getBaseDirectoriesFromCache()
             .filter {
                 if (lastModifiedLimit == 0L && query.isBlank()) {
                     true
@@ -261,30 +264,33 @@ actual class LocalSource(
             .filterNot { it.name.orEmpty().startsWith('.') }
             .filter { it.isDirectory || Archive.isSupported(it) || it.extension.equals("epub", true) }
             .map { chapterFile ->
-                SChapter.create().apply {
-                    url = "${manga.url}/${chapterFile.name}"
-                    name = if (chapterFile.isDirectory) {
-                        chapterFile.name
-                    } else {
-                        chapterFile.nameWithoutExtension
-                    }.orEmpty()
-                    date_upload = chapterFile.lastModified()
-                    chapter_number = ChapterRecognition
-                        .parseChapterNumber(manga.title, this.name, this.chapter_number.toDouble())
-                        .toFloat()
+                async {
+                    SChapter.create().apply {
+                        url = "${manga.url}/${chapterFile.name}"
+                        name = if (chapterFile.isDirectory) {
+                            chapterFile.name
+                        } else {
+                            chapterFile.nameWithoutExtension
+                        }.orEmpty()
+                        date_upload = chapterFile.lastModified()
+                        chapter_number = ChapterRecognition
+                            .parseChapterNumber(manga.title, this.name, this.chapter_number.toDouble())
+                            .toFloat()
 
-                    val format = Format.valueOf(chapterFile)
-                    if (format is Format.Epub) {
-                        format.file.epubReader(context).use { epub ->
-                            epub.fillMetadata(manga, this)
-                        }
-                    } else {
-                        getComicInfoForChapter(chapterFile) { stream ->
-                            setChapterDetailsFromComicInfoFile(stream, this)
+                        val format = Format.valueOf(chapterFile)
+                        if (format is Format.Epub) {
+                            format.file.epubReader(context).use { epub ->
+                                epub.fillMetadata(manga, this)
+                            }
+                        } else {
+                            getComicInfoForChapter(chapterFile) { stream ->
+                                setChapterDetailsFromComicInfoFile(stream, this)
+                            }
                         }
                     }
                 }
             }
+            .awaitAll()
             .sortedWith { c1, c2 ->
                 c2.name.compareToCaseInsensitiveNaturalOrder(c1.name)
             }
@@ -359,6 +365,26 @@ actual class LocalSource(
             logcat(LogPriority.ERROR, e) { "Error updating cover for ${manga.title}" }
             null
         }
+    }
+
+    private fun getBaseDirectoriesFromCache(): List<UniFile> {
+        val now = System.currentTimeMillis()
+        val cached = cachedMangaDirs
+        if (cached != null && (now - cacheTimestamp) < cacheDuration) {
+            return cached
+        }
+        val dirs = fileSystem.getFilesInBaseDirectory()
+            .filter { it.isDirectory && !it.name.orEmpty().startsWith('.') }
+            .distinctBy { it.name }
+        cachedMangaDirs = dirs
+        cacheTimestamp = now
+        return dirs
+    }
+
+    fun invalidateCache() {
+        cachedMangaDirs = null
+        cacheTimestamp = 0L
+        coverManager.clearCache()
     }
 
     companion object {

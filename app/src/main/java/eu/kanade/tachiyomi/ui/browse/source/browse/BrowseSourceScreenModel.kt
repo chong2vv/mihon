@@ -33,9 +33,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import mihon.core.common.utils.mutate
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
@@ -48,6 +50,8 @@ import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.model.toMangaUpdate
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.source.local.LocalSource
+import tachiyomi.source.local.io.LocalSourceFileSystem
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.Instant
@@ -69,6 +73,7 @@ class BrowseSourceScreenModel(
     private val updateManga: UpdateManga = Injekt.get(),
     private val addTracks: AddTracks = Injekt.get(),
     private val getIncognitoState: GetIncognitoState = Injekt.get(),
+    private val localFileSystem: LocalSourceFileSystem = Injekt.get(),
 ) : StateScreenModel<BrowseSourceScreenModel.State>(State(Listing.valueOf(listingQuery))) {
 
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
@@ -100,12 +105,12 @@ class BrowseSourceScreenModel(
     }
 
     /**
-     * Flow of Pager flow tied to [State.listing]
+     * Flow of Pager flow tied to [State.listing] and [State.listingVersion]
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems.get()
-    val mangaPagerFlowFlow = state.map { it.listing }
+    val mangaPagerFlowFlow = state.map { it.listing to it.listingVersion }
         .distinctUntilChanged()
-        .map { listing ->
+        .map { (listing, _) ->
             Pager(PagingConfig(pageSize = 25)) {
                 getRemoteManga(sourceId, listing.query ?: "", listing.filters)
             }.flow.map { pagingData ->
@@ -314,6 +319,138 @@ class BrowseSourceScreenModel(
         mutableState.update { it.copy(toolbarQuery = query) }
     }
 
+    // Multi-selection (Local source only)
+    val isLocalSource: Boolean = sourceId == LocalSource.ID
+
+    fun toggleSelection(manga: Manga) {
+        if (!isLocalSource) return
+        mutableState.update { state ->
+            val newSelection = state.selection.mutate { set ->
+                if (!set.remove(manga.id)) set.add(manga.id)
+            }
+            state.copy(selection = newSelection)
+        }
+    }
+
+    fun clearSelection() {
+        mutableState.update { it.copy(selection = emptySet()) }
+    }
+
+    fun selectAll(allManga: List<Manga>) {
+        if (!isLocalSource) return
+        mutableState.update { state ->
+            val newSelection = state.selection.mutate { set ->
+                allManga.map { it.id }.let(set::addAll)
+            }
+            state.copy(selection = newSelection)
+        }
+    }
+
+    fun invertSelection(allManga: List<Manga>) {
+        if (!isLocalSource) return
+        mutableState.update { state ->
+            val newSelection = state.selection.mutate { set ->
+                val allIds = allManga.map { it.id }
+                val (toRemove, toAdd) = allIds.partition { it in set }
+                set.removeAll(toRemove.toSet())
+                set.addAll(toAdd)
+            }
+            state.copy(selection = newSelection)
+        }
+    }
+
+    fun addFavorites(mangas: List<Manga>) {
+        screenModelScope.launch {
+            val categories = getCategories()
+            val defaultCategoryId = libraryPreferences.defaultCategory.get()
+            val defaultCategory = categories.find { it.id == defaultCategoryId.toLong() }
+
+            val toAdd = mangas.filter { !it.favorite }
+            if (toAdd.isEmpty()) {
+                clearSelection()
+                return@launch
+            }
+
+            when {
+                defaultCategory != null -> {
+                    toAdd.forEach { manga ->
+                        moveMangaToCategories(manga, defaultCategory)
+                        changeMangaFavorite(manga)
+                    }
+                    clearSelection()
+                }
+                defaultCategoryId == 0 || categories.isEmpty() -> {
+                    toAdd.forEach { manga ->
+                        moveMangaToCategories(manga)
+                        changeMangaFavorite(manga)
+                    }
+                    clearSelection()
+                }
+                else -> {
+                    setDialog(
+                        Dialog.ChangeMangaCategoryForMultiple(
+                            toAdd,
+                            categories.mapAsCheckboxState { false }.toImmutableList(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun moveMangasToCategories(mangas: List<Manga>, categoryIds: List<Long>) {
+        screenModelScope.launchIO {
+            mangas.forEach { manga ->
+                setMangaCategories.await(
+                    mangaId = manga.id,
+                    categoryIds = categoryIds.toList(),
+                )
+            }
+        }
+    }
+
+    fun changeMangasFavorite(mangas: List<Manga>) {
+        screenModelScope.launch {
+            mangas.forEach { manga ->
+                changeMangaFavorite(manga)
+            }
+            clearSelection()
+        }
+    }
+
+    fun deleteLocalManga(manga: Manga) {
+        screenModelScope.launchNonCancellable {
+            localFileSystem.deleteMangaDirectory(manga.url)
+            cleanupMangaFromDatabase(manga)
+            (source as? LocalSource)?.invalidateCache()
+            mutableState.update { it.copy(listingVersion = it.listingVersion + 1) }
+        }
+    }
+
+    fun deleteLocalMangas(mangas: List<Manga>) {
+        screenModelScope.launchNonCancellable {
+            mangas.forEach { manga ->
+                localFileSystem.deleteMangaDirectory(manga.url)
+                cleanupMangaFromDatabase(manga)
+            }
+            (source as? LocalSource)?.invalidateCache()
+            clearSelection()
+            mutableState.update { it.copy(listingVersion = it.listingVersion + 1) }
+        }
+    }
+
+    private suspend fun cleanupMangaFromDatabase(manga: Manga) {
+        if (manga.favorite) {
+            val cleaned = manga.removeCovers(coverCache)
+            updateManga.await(
+                cleaned.copy(
+                    favorite = false,
+                    dateAdded = 0,
+                ).toMangaUpdate(),
+            )
+        }
+    }
+
     sealed class Listing(open val query: String?, open val filters: FilterList) {
         data object Popular : Listing(query = GetRemoteManga.QUERY_POPULAR, filters = FilterList())
         data object Latest : Listing(query = GetRemoteManga.QUERY_LATEST, filters = FilterList())
@@ -341,7 +478,13 @@ class BrowseSourceScreenModel(
             val manga: Manga,
             val initialSelection: ImmutableList<CheckboxState.State<Category>>,
         ) : Dialog
+        data class ChangeMangaCategoryForMultiple(
+            val mangas: List<Manga>,
+            val initialSelection: ImmutableList<CheckboxState.State<Category>>,
+        ) : Dialog
         data class Migrate(val target: Manga, val current: Manga) : Dialog
+        data class DeleteLocalManga(val manga: Manga) : Dialog
+        data class DeleteLocalMangas(val mangas: List<Manga>) : Dialog
     }
 
     @Immutable
@@ -350,7 +493,10 @@ class BrowseSourceScreenModel(
         val filters: FilterList = FilterList(),
         val toolbarQuery: String? = null,
         val dialog: Dialog? = null,
+        val selection: Set<Long> = emptySet(),
+        val listingVersion: Long = 0,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
+        val selectionMode get() = selection.isNotEmpty()
     }
 }

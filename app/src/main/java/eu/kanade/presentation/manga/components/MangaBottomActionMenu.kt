@@ -355,3 +355,60 @@ fun LibraryBottomActionMenu(
 }
 
 private val BottomBarMenuDpOffset = DpOffset(0.dp, 0.dp)
+
+@Composable
+fun LocalSourceBottomActionMenu(
+    visible: Boolean,
+    onAddToLibraryClicked: () -> Unit,
+    onDeleteClicked: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically(animationSpec = tween(delayMillis = 300)),
+        exit = shrinkVertically(animationSpec = tween()),
+    ) {
+        val scope = rememberCoroutineScope()
+        Surface(
+            modifier = modifier,
+            shape = MaterialTheme.shapes.large.copy(bottomEnd = ZeroCornerSize, bottomStart = ZeroCornerSize),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            val haptic = LocalHapticFeedback.current
+            val confirm = remember { mutableStateListOf(false, false) }
+            var resetJob by remember { mutableStateOf<Job?>(null) }
+            val onLongClickItem: (Int) -> Unit = { toConfirmIndex ->
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                confirm.indices.forEach { i -> confirm[i] = i == toConfirmIndex }
+                resetJob?.cancel()
+                resetJob = scope.launch {
+                    delay(1.seconds)
+                    if (isActive) confirm[toConfirmIndex] = false
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .windowInsetsPadding(
+                        WindowInsets.navigationBars
+                            .only(WindowInsetsSides.Bottom),
+                    )
+                    .padding(horizontal = 8.dp, vertical = 12.dp),
+            ) {
+                Button(
+                    title = stringResource(MR.strings.add_to_library),
+                    icon = Icons.Outlined.BookmarkAdd,
+                    toConfirm = confirm[0],
+                    onLongClick = { onLongClickItem(0) },
+                    onClick = onAddToLibraryClicked,
+                )
+                Button(
+                    title = stringResource(MR.strings.action_delete),
+                    icon = Icons.Outlined.Delete,
+                    toConfirm = confirm[1],
+                    onLongClick = { onLongClickItem(1) },
+                    onClick = onDeleteClicked,
+                )
+            }
+        }
+    }
+}

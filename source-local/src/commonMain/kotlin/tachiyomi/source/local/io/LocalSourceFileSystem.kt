@@ -11,4 +11,6 @@ expect class LocalSourceFileSystem {
     fun getMangaDirectory(name: String): UniFile?
 
     fun getFilesInMangaDirectory(name: String): List<UniFile>
+
+    fun deleteMangaDirectory(name: String): Boolean
 }

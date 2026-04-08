@@ -3,6 +3,8 @@ package eu.kanade.presentation.browse.components
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.outlined.FlipToBack
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -122,5 +124,35 @@ fun BrowseSourceToolbar(
             }
         },
         scrollBehavior = scrollBehavior,
+    )
+}
+
+@Composable
+fun BrowseSourceSelectionToolbar(
+    selectedCount: Int,
+    onClickUnselectAll: () -> Unit,
+    onClickSelectAll: () -> Unit,
+    onClickInvertSelection: () -> Unit,
+) {
+    AppBar(
+        titleContent = { Text(text = "$selectedCount") },
+        actions = {
+            AppBarActions(
+                persistentListOf(
+                    AppBar.Action(
+                        title = stringResource(MR.strings.action_select_all),
+                        icon = Icons.Outlined.SelectAll,
+                        onClick = onClickSelectAll,
+                    ),
+                    AppBar.Action(
+                        title = stringResource(MR.strings.action_select_inverse),
+                        icon = Icons.Outlined.FlipToBack,
+                        onClick = onClickInvertSelection,
+                    ),
+                ),
+            )
+        },
+        isActionMode = true,
+        onCancelActionMode = onClickUnselectAll,
     )
 }

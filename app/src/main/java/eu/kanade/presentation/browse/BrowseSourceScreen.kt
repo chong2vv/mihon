@@ -49,6 +49,8 @@ fun BrowseSourceContent(
     onLocalSourceHelpClick: () -> Unit,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
+    selection: Set<Long> = emptySet(),
+    onDeleteSwipe: ((Manga) -> Unit)? = null,
 ) {
     val context = LocalContext.current
 
@@ -125,6 +127,7 @@ fun BrowseSourceContent(
                 contentPadding = contentPadding,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
+                selection = selection,
             )
         }
         LibraryDisplayMode.List -> {
@@ -133,6 +136,9 @@ fun BrowseSourceContent(
                 contentPadding = contentPadding,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
+                selection = selection,
+                isLocalSource = source is LocalSource,
+                onDeleteSwipe = onDeleteSwipe,
             )
         }
         LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> {
@@ -142,6 +148,7 @@ fun BrowseSourceContent(
                 contentPadding = contentPadding,
                 onMangaClick = onMangaClick,
                 onMangaLongClick = onMangaLongClick,
+                selection = selection,
             )
         }
     }

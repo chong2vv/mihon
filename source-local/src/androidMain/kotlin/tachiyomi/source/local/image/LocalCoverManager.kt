@@ -8,6 +8,7 @@ import tachiyomi.core.common.storage.nameWithoutExtension
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.source.local.io.LocalSourceFileSystem
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
 
 private const val DEFAULT_COVER_NAME = "cover.jpg"
 
@@ -16,13 +17,29 @@ actual class LocalCoverManager(
     private val fileSystem: LocalSourceFileSystem,
 ) {
 
+    private val coverCache = ConcurrentHashMap<String, CoverCacheEntry>()
+
     actual fun find(mangaUrl: String): UniFile? {
-        return fileSystem.getFilesInMangaDirectory(mangaUrl)
-            // Get all file whose names start with "cover"
-            .filter { it.isFile && it.nameWithoutExtension.equals("cover", ignoreCase = true) }
-            // Get the first actual image
-            .firstOrNull { ImageUtil.isImage(it.name) { it.openInputStream() } }
+        coverCache[mangaUrl]?.let { entry ->
+            if (entry.file != null && entry.file.exists()) return entry.file
+            if (entry.file != null) {
+                coverCache.remove(mangaUrl)
+            } else {
+                return null
+            }
+        }
+        return findAndCache(mangaUrl)
     }
+
+    private fun findAndCache(mangaUrl: String): UniFile? {
+        val result = fileSystem.getFilesInMangaDirectory(mangaUrl)
+            .filter { it.isFile && it.nameWithoutExtension.equals("cover", ignoreCase = true) }
+            .firstOrNull { ImageUtil.isImage(it.name) { it.openInputStream() } }
+        coverCache[mangaUrl] = CoverCacheEntry(result)
+        return result
+    }
+
+    private data class CoverCacheEntry(val file: UniFile?)
 
     actual fun update(
         manga: SManga,
@@ -45,6 +62,15 @@ actual class LocalCoverManager(
         DiskUtil.createNoMediaFile(directory, context)
 
         manga.thumbnail_url = targetFile.uri.toString()
+        coverCache[manga.url] = CoverCacheEntry(targetFile)
         return targetFile
+    }
+
+    fun clearCache() {
+        coverCache.clear()
+    }
+
+    fun invalidate(mangaUrl: String) {
+        coverCache.remove(mangaUrl)
     }
 }
