@@ -34,6 +34,7 @@ import tachiyomi.domain.manga.interactor.GetLibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.toMangaUpdate
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.source.local.LocalSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.CopyOnWriteArrayList
@@ -95,6 +96,7 @@ class MetadataUpdateJob(private val context: Context, workerParams: WorkerParame
      */
     private suspend fun addMangaToQueue() {
         mangaToUpdate = getLibraryManga.await()
+            .filterNot { it.manga.source == LocalSource.ID }
         notifier.showQueueSizeWarningNotificationIfNeeded(mangaToUpdate)
     }
 
