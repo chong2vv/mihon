@@ -122,23 +122,32 @@ actual class LocalSource(
             }
         }
 
-        val mangas = mangaDirs
+        val pageSize = 25
+        val startIndex = (page - 1) * pageSize
+        val endIndex = minOf(startIndex + pageSize, mangaDirs.size)
+
+        if (startIndex >= mangaDirs.size) {
+            return@withIOContext MangasPage(emptyList(), false)
+        }
+
+        val pageDirs = mangaDirs.subList(startIndex, endIndex)
+
+        val mangas = pageDirs
             .map { mangaDir ->
                 async {
                     SManga.create().apply {
                         title = mangaDir.name.orEmpty()
                         url = mangaDir.name.orEmpty()
 
-                        // Try to find the cover
-                        coverManager.find(mangaDir.name.orEmpty())?.let {
-                            thumbnail_url = it.uri.toString()
-                        }
+                        val cover = coverManager.find(mangaDir.name.orEmpty())
+                            ?: generateCoverFromFirstChapter(mangaDir.name.orEmpty(), this)
+                        cover?.let { thumbnail_url = it.uri.toString() }
                     }
                 }
             }
             .awaitAll()
 
-        MangasPage(mangas, false)
+        MangasPage(mangas, endIndex < mangaDirs.size)
     }
 
     // Manga details related
@@ -365,6 +374,23 @@ actual class LocalSource(
             logcat(LogPriority.ERROR, e) { "Error updating cover for ${manga.title}" }
             null
         }
+    }
+
+    private fun generateCoverFromFirstChapter(mangaDirName: String, manga: SManga): UniFile? {
+        val mangaDir = fileSystem.getMangaDirectory(mangaDirName) ?: return null
+        val firstChapter = mangaDir.listFiles()
+            ?.filterNot { it.name.orEmpty().startsWith('.') }
+            ?.filter { it.isDirectory || Archive.isSupported(it) || it.extension.equals("epub", true) }
+            ?.sortedWith { f1, f2 ->
+                f1.name.orEmpty().compareToCaseInsensitiveNaturalOrder(f2.name.orEmpty())
+            }
+            ?.firstOrNull()
+            ?: return null
+
+        val chapter = SChapter.create().apply {
+            url = "$mangaDirName/${firstChapter.name}"
+        }
+        return updateCover(chapter, manga)
     }
 
     private fun getBaseDirectoriesFromCache(): List<UniFile> {
