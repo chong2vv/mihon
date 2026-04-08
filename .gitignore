@@ -2,12 +2,17 @@
 .gradle
 .kotlin
 build
+**/bin
 
 # IDE files
 *.iml
 .idea/*
 !.idea/icon.svg
+.vscode
 /captures
+
+# AI/agent tooling
+.claude
 
 # Configuration files
 local.properties
