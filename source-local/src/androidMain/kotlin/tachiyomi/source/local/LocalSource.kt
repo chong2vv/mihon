@@ -376,7 +376,7 @@ actual class LocalSource(
         }
     }
 
-    private fun generateCoverFromFirstChapter(mangaDirName: String, manga: SManga): UniFile? {
+    internal fun generateCoverFromFirstChapter(mangaDirName: String, manga: SManga): UniFile? {
         val mangaDir = fileSystem.getMangaDirectory(mangaDirName) ?: return null
         val firstChapter = mangaDir.listFiles()
             ?.filterNot { it.name.orEmpty().startsWith('.') }
@@ -413,9 +413,9 @@ actual class LocalSource(
         coverManager.clearCache()
     }
 
-    companion object {
-        const val ID = 0L
-        const val HELP_URL = "https://mihon.app/docs/guides/local-source/"
+    actual companion object {
+        actual const val ID = 0L
+        actual const val HELP_URL = "https://mihon.app/docs/guides/local-source/"
 
         private val LATEST_THRESHOLD = 7.days.inWholeMilliseconds
     }

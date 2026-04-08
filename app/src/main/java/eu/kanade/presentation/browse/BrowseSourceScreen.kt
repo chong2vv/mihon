@@ -155,6 +155,75 @@ fun BrowseSourceContent(
 }
 
 @Composable
+fun LocalBrowseSourceContent(
+    source: Source?,
+    mangaList: List<Manga>,
+    columns: GridCells,
+    displayMode: LibraryDisplayMode,
+    contentPadding: PaddingValues,
+    onLocalSourceHelpClick: () -> Unit,
+    onMangaClick: (Manga) -> Unit,
+    onMangaLongClick: (Manga) -> Unit,
+    selection: Set<Long> = emptySet(),
+    onDeleteSwipe: ((Manga) -> Unit)? = null,
+    isSyncing: Boolean = false,
+) {
+    if (isSyncing && mangaList.isEmpty()) {
+        LoadingScreen(Modifier.padding(contentPadding))
+        return
+    }
+
+    if (mangaList.isEmpty()) {
+        EmptyScreen(
+            modifier = Modifier.padding(contentPadding),
+            message = stringResource(MR.strings.no_results_found),
+            actions = persistentListOf(
+                EmptyScreenAction(
+                    stringRes = MR.strings.local_source_help_guide,
+                    icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                    onClick = onLocalSourceHelpClick,
+                ),
+            ),
+        )
+        return
+    }
+
+    when (displayMode) {
+        LibraryDisplayMode.ComfortableGrid -> {
+            BrowseSourceComfortableGrid(
+                mangaList = mangaList,
+                columns = columns,
+                contentPadding = contentPadding,
+                onMangaClick = onMangaClick,
+                onMangaLongClick = onMangaLongClick,
+                selection = selection,
+            )
+        }
+        LibraryDisplayMode.List -> {
+            BrowseSourceList(
+                mangaList = mangaList,
+                contentPadding = contentPadding,
+                onMangaClick = onMangaClick,
+                onMangaLongClick = onMangaLongClick,
+                selection = selection,
+                isLocalSource = true,
+                onDeleteSwipe = onDeleteSwipe,
+            )
+        }
+        LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> {
+            BrowseSourceCompactGrid(
+                mangaList = mangaList,
+                columns = columns,
+                contentPadding = contentPadding,
+                onMangaClick = onMangaClick,
+                onMangaLongClick = onMangaLongClick,
+                selection = selection,
+            )
+        }
+    }
+}
+
+@Composable
 internal fun MissingSourceScreen(
     source: StubSource,
     navigateUp: () -> Unit,

@@ -44,6 +44,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.core.util.ifSourcesLoaded
 import eu.kanade.presentation.browse.BrowseSourceContent
+import eu.kanade.presentation.browse.LocalBrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
 import eu.kanade.presentation.browse.components.BrowseSourceSelectionToolbar
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
@@ -67,6 +68,7 @@ import mihon.feature.migration.dialog.MigrateMangaDialog
 import mihon.presentation.core.util.collectAsLazyPagingItems
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -132,9 +134,14 @@ data class BrowseSourceScreen(
         }
 
         val mangaPagingItems = screenModel.mangaPagerFlowFlow.collectAsLazyPagingItems()
+        val localMangaList by screenModel.localMangaFlow.collectAsState()
 
         val allLoadedManga = {
-            (0 until mangaPagingItems.itemCount).mapNotNull { mangaPagingItems[it]?.value }
+            if (screenModel.isLocalSource) {
+                localMangaList
+            } else {
+                (0 until mangaPagingItems.itemCount).mapNotNull { mangaPagingItems[it]?.value }
+            }
         }
         val selectedManga = {
             allLoadedManga().filter { it.id in state.selection }
@@ -261,54 +268,74 @@ data class BrowseSourceScreen(
                 }
             },
         ) { paddingValues ->
-            BrowseSourceContent(
-                source = screenModel.source,
-                mangaList = mangaPagingItems,
-                columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
-                displayMode = screenModel.displayMode,
-                snackbarHostState = snackbarHostState,
-                contentPadding = paddingValues,
-                onWebViewClick = onWebViewClick,
-                onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
-                onLocalSourceHelpClick = onHelpClick,
-                onMangaClick = { manga ->
+            val onMangaClick: (Manga) -> Unit = { manga ->
+                if (state.selectionMode) {
+                    screenModel.toggleSelection(manga)
+                } else {
+                    navigator.push(MangaScreen(manga.id, true))
+                }
+            }
+            val onMangaLongClick: (Manga) -> Unit = { manga ->
+                if (screenModel.isLocalSource) {
                     if (state.selectionMode) {
                         screenModel.toggleSelection(manga)
                     } else {
-                        navigator.push(MangaScreen(manga.id, true))
+                        screenModel.toggleSelection(manga)
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
-                },
-                onMangaLongClick = { manga ->
-                    if (screenModel.isLocalSource) {
-                        if (state.selectionMode) {
-                            screenModel.toggleSelection(manga)
-                        } else {
-                            screenModel.toggleSelection(manga)
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        }
-                    } else {
-                        scope.launchIO {
-                            val duplicates = screenModel.getDuplicateLibraryManga(manga)
-                            when {
-                                manga.favorite -> screenModel.setDialog(
-                                    BrowseSourceScreenModel.Dialog.RemoveManga(manga),
-                                )
-                                duplicates.isNotEmpty() -> screenModel.setDialog(
-                                    BrowseSourceScreenModel.Dialog.AddDuplicateManga(manga, duplicates),
-                                )
-                                else -> screenModel.addFavorite(manga)
-                            }
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        }
-                    }
-                },
-                selection = state.selection,
-                onDeleteSwipe = if (screenModel.isLocalSource) { manga ->
-                    screenModel.setDialog(BrowseSourceScreenModel.Dialog.DeleteLocalManga(manga))
                 } else {
-                    null
-                },
-            )
+                    scope.launchIO {
+                        val duplicates = screenModel.getDuplicateLibraryManga(manga)
+                        when {
+                            manga.favorite -> screenModel.setDialog(
+                                BrowseSourceScreenModel.Dialog.RemoveManga(manga),
+                            )
+                            duplicates.isNotEmpty() -> screenModel.setDialog(
+                                BrowseSourceScreenModel.Dialog.AddDuplicateManga(manga, duplicates),
+                            )
+                            else -> screenModel.addFavorite(manga)
+                        }
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                }
+            }
+            val onDeleteSwipe: ((Manga) -> Unit)? = if (screenModel.isLocalSource) { manga ->
+                screenModel.setDialog(BrowseSourceScreenModel.Dialog.DeleteLocalManga(manga))
+            } else {
+                null
+            }
+
+            if (screenModel.isLocalSource) {
+                LocalBrowseSourceContent(
+                    source = screenModel.source,
+                    mangaList = localMangaList,
+                    columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
+                    displayMode = screenModel.displayMode,
+                    contentPadding = paddingValues,
+                    onLocalSourceHelpClick = onHelpClick,
+                    onMangaClick = onMangaClick,
+                    onMangaLongClick = onMangaLongClick,
+                    selection = state.selection,
+                    onDeleteSwipe = onDeleteSwipe,
+                    isSyncing = state.isLocalSyncing,
+                )
+            } else {
+                BrowseSourceContent(
+                    source = screenModel.source,
+                    mangaList = mangaPagingItems,
+                    columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
+                    displayMode = screenModel.displayMode,
+                    snackbarHostState = snackbarHostState,
+                    contentPadding = paddingValues,
+                    onWebViewClick = onWebViewClick,
+                    onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
+                    onLocalSourceHelpClick = onHelpClick,
+                    onMangaClick = onMangaClick,
+                    onMangaLongClick = onMangaLongClick,
+                    selection = state.selection,
+                    onDeleteSwipe = onDeleteSwipe,
+                )
+            }
         }
 
         val onDismissRequest = { screenModel.setDialog(null) }

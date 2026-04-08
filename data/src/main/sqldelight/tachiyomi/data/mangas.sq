@@ -226,6 +226,18 @@ WHERE _id = :mangaId;
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
 
+getLocalManga:
+SELECT *
+FROM mangas
+WHERE source = 0
+AND (title LIKE '%' || :query || '%' OR :query = '')
+ORDER BY title COLLATE NOCASE;
+
+getLocalMangaBySourceId:
+SELECT *
+FROM mangas
+WHERE source = 0;
+
 insertNetworkManga {
     -- Insert the manga if it doesn't exist already
     INSERT INTO mangas(

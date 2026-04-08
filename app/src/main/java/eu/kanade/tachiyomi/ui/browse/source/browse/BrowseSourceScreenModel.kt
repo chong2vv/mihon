@@ -25,31 +25,41 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import logcat.LogPriority
 import mihon.core.common.utils.mutate
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.interactor.SetMangaDefaultChapterFlags
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
+import tachiyomi.domain.manga.interactor.GetLocalManga
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.model.toMangaUpdate
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.source.local.LocalMangaSyncService
 import tachiyomi.source.local.LocalSource
 import tachiyomi.source.local.io.LocalSourceFileSystem
 import uy.kohesive.injekt.Injekt
@@ -74,7 +84,11 @@ class BrowseSourceScreenModel(
     private val addTracks: AddTracks = Injekt.get(),
     private val getIncognitoState: GetIncognitoState = Injekt.get(),
     private val localFileSystem: LocalSourceFileSystem = Injekt.get(),
+    private val getLocalManga: GetLocalManga = Injekt.get(),
+    private val localMangaSyncService: LocalMangaSyncService = Injekt.get(),
 ) : StateScreenModel<BrowseSourceScreenModel.State>(State(Listing.valueOf(listingQuery))) {
+
+    val isLocalSource: Boolean = sourceId == LocalSource.ID
 
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
 
@@ -102,28 +116,62 @@ class BrowseSourceScreenModel(
         if (!getIncognitoState.await(source.id)) {
             sourcePreferences.lastUsedSource.set(source.id)
         }
+
+        if (isLocalSource) {
+            syncLocalManga()
+        }
+    }
+
+    // Local source: dedicated data flow (sync + DB query, no Pager)
+    private val localSearchQuery = MutableStateFlow("")
+
+    val localMangaFlow: StateFlow<List<Manga>> = if (isLocalSource) {
+        localSearchQuery
+            .flatMapLatest { query -> getLocalManga.subscribe(query) }
+            .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyList())
+    } else {
+        MutableStateFlow(emptyList())
+    }
+
+    fun syncLocalManga() {
+        if (!isLocalSource) return
+        screenModelScope.launchIO {
+            mutableState.update { it.copy(isLocalSyncing = true) }
+            try {
+                localMangaSyncService.sync()
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to sync local manga" }
+            } finally {
+                mutableState.update { it.copy(isLocalSyncing = false) }
+            }
+        }
     }
 
     /**
-     * Flow of Pager flow tied to [State.listing] and [State.listingVersion]
+     * Flow of Pager flow tied to [State.listing].
+     * Only active for non-local sources.
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems.get()
-    val mangaPagerFlowFlow = state.map { it.listing to it.listingVersion }
-        .distinctUntilChanged()
-        .map { (listing, _) ->
-            Pager(PagingConfig(pageSize = 25)) {
-                getRemoteManga(sourceId, listing.query ?: "", listing.filters)
-            }.flow.map { pagingData ->
-                pagingData.map { manga ->
-                    getManga.subscribe(manga.url, manga.source)
-                        .map { it ?: manga }
-                        .stateIn(ioCoroutineScope)
+    val mangaPagerFlowFlow = if (!isLocalSource) {
+        state.map { it.listing }
+            .distinctUntilChanged()
+            .map { listing ->
+                Pager(PagingConfig(pageSize = 25)) {
+                    getRemoteManga(sourceId, listing.query ?: "", listing.filters)
+                }.flow.map { pagingData ->
+                    pagingData.map { manga ->
+                        getManga.subscribe(manga.url, manga.source)
+                            .map { it ?: manga }
+                            .stateIn(ioCoroutineScope)
+                    }
+                        .filter { !hideInLibraryItems || !it.value.favorite }
                 }
-                    .filter { !hideInLibraryItems || !it.value.favorite }
+                    .cachedIn(ioCoroutineScope)
             }
-                .cachedIn(ioCoroutineScope)
-        }
-        .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
+            .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
+    } else {
+        MutableStateFlow(emptyFlow())
+    }
 
     fun getColumnsPreference(orientation: Int): GridCells {
         val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -157,6 +205,12 @@ class BrowseSourceScreenModel(
 
     fun search(query: String? = null, filters: FilterList? = null) {
         if (source !is CatalogueSource) return
+
+        if (isLocalSource) {
+            localSearchQuery.value = query.orEmpty()
+            mutableState.update { it.copy(toolbarQuery = query) }
+            return
+        }
 
         val input = state.value.listing as? Listing.Search
             ?: Listing.Search(query = null, filters = source.getFilterList())
@@ -320,8 +374,6 @@ class BrowseSourceScreenModel(
     }
 
     // Multi-selection (Local source only)
-    val isLocalSource: Boolean = sourceId == LocalSource.ID
-
     fun toggleSelection(manga: Manga) {
         if (!isLocalSource) return
         mutableState.update { state ->
@@ -423,32 +475,34 @@ class BrowseSourceScreenModel(
             localFileSystem.deleteMangaDirectory(manga.url)
             cleanupMangaFromDatabase(manga)
             (source as? LocalSource)?.invalidateCache()
-            mutableState.update { it.copy(listingVersion = it.listingVersion + 1) }
+            syncLocalManga()
         }
     }
 
     fun deleteLocalMangas(mangas: List<Manga>) {
         screenModelScope.launchNonCancellable {
-            mangas.forEach { manga ->
-                localFileSystem.deleteMangaDirectory(manga.url)
-                cleanupMangaFromDatabase(manga)
+            withIOContext {
+                mangas.map { manga ->
+                    async {
+                        localFileSystem.deleteMangaDirectory(manga.url)
+                        cleanupMangaFromDatabase(manga)
+                    }
+                }.awaitAll()
             }
             (source as? LocalSource)?.invalidateCache()
             clearSelection()
-            mutableState.update { it.copy(listingVersion = it.listingVersion + 1) }
+            syncLocalManga()
         }
     }
 
     private suspend fun cleanupMangaFromDatabase(manga: Manga) {
-        if (manga.favorite) {
-            val cleaned = manga.removeCovers(coverCache)
-            updateManga.await(
-                cleaned.copy(
-                    favorite = false,
-                    dateAdded = 0,
-                ).toMangaUpdate(),
-            )
-        }
+        val cleaned = manga.removeCovers(coverCache)
+        updateManga.await(
+            cleaned.copy(
+                favorite = false,
+                dateAdded = 0,
+            ).toMangaUpdate(),
+        )
     }
 
     sealed class Listing(open val query: String?, open val filters: FilterList) {
@@ -494,7 +548,7 @@ class BrowseSourceScreenModel(
         val toolbarQuery: String? = null,
         val dialog: Dialog? = null,
         val selection: Set<Long> = emptySet(),
-        val listingVersion: Long = 0,
+        val isLocalSyncing: Boolean = false,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
         val selectionMode get() = selection.isNotEmpty()

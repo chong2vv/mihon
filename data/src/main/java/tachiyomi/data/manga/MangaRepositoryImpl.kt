@@ -152,6 +152,14 @@ class MangaRepositoryImpl(
         }
     }
 
+    override fun getLocalMangaAsFlow(query: String): Flow<List<Manga>> {
+        return handler.subscribeToList { mangasQueries.getLocalManga(query, MangaMapper::mapManga) }
+    }
+
+    override suspend fun getLocalManga(): List<Manga> {
+        return handler.awaitList { mangasQueries.getLocalMangaBySourceId(MangaMapper::mapManga) }
+    }
+
     private suspend fun partialUpdate(vararg mangaUpdates: MangaUpdate) {
         handler.await(inTransaction = true) {
             mangaUpdates.forEach { value ->

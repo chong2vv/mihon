@@ -18,6 +18,7 @@ actual class LocalCoverManager(
 ) {
 
     private val coverCache = ConcurrentHashMap<String, CoverCacheEntry>()
+    private val negativeCacheDuration: Long = 60_000L // 60 seconds TTL for negative cache
 
     actual fun find(mangaUrl: String): UniFile? {
         coverCache[mangaUrl]?.let { entry ->
@@ -25,7 +26,11 @@ actual class LocalCoverManager(
             if (entry.file != null) {
                 coverCache.remove(mangaUrl)
             } else {
-                return null
+                // Negative cache: check TTL before returning null
+                if (System.currentTimeMillis() - entry.timestamp < negativeCacheDuration) {
+                    return null
+                }
+                coverCache.remove(mangaUrl)
             }
         }
         return findAndCache(mangaUrl)
@@ -35,11 +40,11 @@ actual class LocalCoverManager(
         val result = fileSystem.getFilesInMangaDirectory(mangaUrl)
             .filter { it.isFile && it.nameWithoutExtension.equals("cover", ignoreCase = true) }
             .firstOrNull { ImageUtil.isImage(it.name) { it.openInputStream() } }
-        coverCache[mangaUrl] = CoverCacheEntry(result)
+        coverCache[mangaUrl] = CoverCacheEntry(result, System.currentTimeMillis())
         return result
     }
 
-    private data class CoverCacheEntry(val file: UniFile?)
+    private data class CoverCacheEntry(val file: UniFile?, val timestamp: Long)
 
     actual fun update(
         manga: SManga,
@@ -62,7 +67,7 @@ actual class LocalCoverManager(
         DiskUtil.createNoMediaFile(directory, context)
 
         manga.thumbnail_url = targetFile.uri.toString()
-        coverCache[manga.url] = CoverCacheEntry(targetFile)
+        coverCache[manga.url] = CoverCacheEntry(targetFile, System.currentTimeMillis())
         return targetFile
     }
 

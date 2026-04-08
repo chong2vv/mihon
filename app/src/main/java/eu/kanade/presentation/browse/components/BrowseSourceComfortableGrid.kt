@@ -58,6 +58,33 @@ fun BrowseSourceComfortableGrid(
 }
 
 @Composable
+fun BrowseSourceComfortableGrid(
+    mangaList: List<Manga>,
+    columns: GridCells,
+    contentPadding: PaddingValues,
+    onMangaClick: (Manga) -> Unit,
+    onMangaLongClick: (Manga) -> Unit,
+    selection: Set<Long> = emptySet(),
+) {
+    LazyVerticalGrid(
+        columns = columns,
+        contentPadding = contentPadding + PaddingValues(8.dp),
+        verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
+        horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
+    ) {
+        items(count = mangaList.size) { index ->
+            val manga = mangaList[index]
+            BrowseSourceComfortableGridItem(
+                manga = manga,
+                onClick = { onMangaClick(manga) },
+                onLongClick = { onMangaLongClick(manga) },
+                isSelected = manga.id in selection,
+            )
+        }
+    }
+}
+
+@Composable
 private fun BrowseSourceComfortableGridItem(
     manga: Manga,
     onClick: () -> Unit = {},

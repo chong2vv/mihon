@@ -39,4 +39,8 @@ interface MangaRepository {
     suspend fun updateAll(mangaUpdates: List<MangaUpdate>): Boolean
 
     suspend fun insertNetworkManga(manga: List<Manga>): List<Manga>
+
+    fun getLocalMangaAsFlow(query: String): Flow<List<Manga>>
+
+    suspend fun getLocalManga(): List<Manga>
 }

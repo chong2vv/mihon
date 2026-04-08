@@ -90,6 +90,59 @@ fun BrowseSourceList(
 }
 
 @Composable
+fun BrowseSourceList(
+    mangaList: List<Manga>,
+    contentPadding: PaddingValues,
+    onMangaClick: (Manga) -> Unit,
+    onMangaLongClick: (Manga) -> Unit,
+    selection: Set<Long> = emptySet(),
+    isLocalSource: Boolean = false,
+    onDeleteSwipe: ((Manga) -> Unit)? = null,
+) {
+    LazyColumn(
+        contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
+    ) {
+        items(count = mangaList.size) { index ->
+            val manga = mangaList[index]
+            if (isLocalSource && onDeleteSwipe != null && selection.isEmpty()) {
+                val deleteAction = SwipeAction(
+                    icon = {
+                        Icon(
+                            modifier = Modifier.padding(16.dp),
+                            imageVector = Icons.Outlined.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    },
+                    background = MaterialTheme.colorScheme.errorContainer,
+                    onSwipe = { onDeleteSwipe(manga) },
+                )
+                SwipeableActionsBox(
+                    modifier = Modifier.clipToBounds(),
+                    endActions = listOf(deleteAction),
+                    swipeThreshold = 56.dp,
+                    backgroundUntilSwipeThreshold = MaterialTheme.colorScheme.surfaceContainerLowest,
+                ) {
+                    BrowseSourceListItem(
+                        manga = manga,
+                        onClick = { onMangaClick(manga) },
+                        onLongClick = { onMangaLongClick(manga) },
+                        isSelected = manga.id in selection,
+                    )
+                }
+            } else {
+                BrowseSourceListItem(
+                    manga = manga,
+                    onClick = { onMangaClick(manga) },
+                    onLongClick = { onMangaLongClick(manga) },
+                    isSelected = manga.id in selection,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun BrowseSourceListItem(
     manga: Manga,
     onClick: () -> Unit = {},
