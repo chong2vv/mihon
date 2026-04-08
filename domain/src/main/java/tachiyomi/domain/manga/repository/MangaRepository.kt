@@ -43,4 +43,6 @@ interface MangaRepository {
     fun getLocalMangaAsFlow(query: String): Flow<List<Manga>>
 
     suspend fun getLocalManga(): List<Manga>
+
+    suspend fun deleteLocalManga(mangaId: Long)
 }

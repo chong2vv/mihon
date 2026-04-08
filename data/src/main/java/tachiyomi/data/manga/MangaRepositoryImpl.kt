@@ -160,6 +160,10 @@ class MangaRepositoryImpl(
         return handler.awaitList { mangasQueries.getLocalMangaBySourceId(MangaMapper::mapManga) }
     }
 
+    override suspend fun deleteLocalManga(mangaId: Long) {
+        handler.await { mangasQueries.deleteLocalMangaById(mangaId) }
+    }
+
     private suspend fun partialUpdate(vararg mangaUpdates: MangaUpdate) {
         handler.await(inTransaction = true) {
             mangaUpdates.forEach { value ->

@@ -226,6 +226,12 @@ WHERE _id = :mangaId;
 selectLastInsertedRowId:
 SELECT last_insert_rowid();
 
+deleteLocalMangaById:
+DELETE FROM mangas
+WHERE _id = :mangaId
+AND source = 0
+AND favorite = 0;
+
 getLocalManga:
 SELECT *
 FROM mangas

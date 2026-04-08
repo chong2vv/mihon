@@ -23,8 +23,8 @@ class LocalMangaSyncService(
     /**
      * Syncs file system state with database. Returns number of changes made.
      * - New directories → insert into DB with cover
-     * - Removed directories → mark unfavorite or leave for cleanup
-     * - Existing → update cover URL if it changed
+     * - Removed directories → delete non-favorite records from DB
+     * - Existing → update cover URL if missing
      */
     suspend fun sync(): Int = withIOContext {
         val fsDirs = fileSystem.getFilesInBaseDirectory()
@@ -63,13 +63,12 @@ class LocalMangaSyncService(
             changes += newMangas.size
         }
 
-        // Removed entries: in DB but not in file system (non-favorite only)
-        val removedManga = dbManga.filter { it.url !in fsNames && !it.favorite }
+        // Removed entries: in DB but not in file system
+        val removedManga = dbManga.filter { it.url !in fsNames }
         if (removedManga.isNotEmpty()) {
-            val updates = removedManga.map { manga ->
-                MangaUpdate(id = manga.id, favorite = false, dateAdded = 0)
+            for (manga in removedManga) {
+                mangaRepository.deleteLocalManga(manga.id)
             }
-            mangaRepository.updateAll(updates)
             changes += removedManga.size
         }
 

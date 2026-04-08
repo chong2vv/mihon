@@ -28,6 +28,8 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -133,9 +135,15 @@ class BrowseSourceScreenModel(
         MutableStateFlow(emptyList())
     }
 
+    private val syncMutex = Mutex()
+
     fun syncLocalManga() {
         if (!isLocalSource) return
-        screenModelScope.launchIO {
+        screenModelScope.launchIO { doSyncLocalManga() }
+    }
+
+    private suspend fun doSyncLocalManga() {
+        syncMutex.withLock {
             mutableState.update { it.copy(isLocalSyncing = true) }
             try {
                 localMangaSyncService.sync()
@@ -475,7 +483,7 @@ class BrowseSourceScreenModel(
             localFileSystem.deleteMangaDirectory(manga.url)
             cleanupMangaFromDatabase(manga)
             (source as? LocalSource)?.invalidateCache()
-            syncLocalManga()
+            doSyncLocalManga()
         }
     }
 
@@ -491,7 +499,7 @@ class BrowseSourceScreenModel(
             }
             (source as? LocalSource)?.invalidateCache()
             clearSelection()
-            syncLocalManga()
+            doSyncLocalManga()
         }
     }
 
