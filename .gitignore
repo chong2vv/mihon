@@ -11,8 +11,8 @@ build
 .vscode
 /captures
 
-# AI/agent tooling
-.claude
+# AI/agent tooling (keep .claude/ tracked for project rules)
+.claude/settings.local.json
 
 # Configuration files
 local.properties
