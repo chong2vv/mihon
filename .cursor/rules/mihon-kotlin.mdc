@@ -1,0 +1,40 @@
+---
+description: Mihon Kotlin 编码规范 - 并发、状态管理、集合操作
+globs: "**/*.kt"
+alwaysApply: false
+---
+
+# Kotlin 编码规范
+
+## 并发
+
+- `screenModelScope.launchIO {}` — 普通异步操作
+- `screenModelScope.launchNonCancellable {}` — 不可取消操作（删除、数据库写入）
+- `withIOContext {}` — 切换到 IO 调度器
+- `async {} / awaitAll()` — 并行化独立操作
+- `Mutex` — 防止同一操作并发执行（如 sync）
+
+## 属性初始化顺序
+
+Kotlin 的 `init` 块和属性按**声明顺序**初始化。如果 `init` 中启动协程引用了某个属性，该属性必须声明在 `init` 之前，否则可能 NPE。
+
+```kotlin
+// ✅ 正确：syncMutex 在 init 之前声明
+private val syncMutex = Mutex()
+init { launchIO { syncMutex.withLock { ... } } }
+
+// ❌ 错误：syncMutex 在 init 之后声明，协程可能在初始化完成前执行
+init { launchIO { syncMutex.withLock { ... } } }
+private val syncMutex = Mutex()
+```
+
+## 集合与不可变性
+
+- 优先使用不可变数据（`val`, `data class`, `copy()`）
+- 集合操作优先 `kotlinx.collections.immutable`（`persistentListOf`, `toImmutableList`）
+- 状态更新使用 `mutate {}` 扩展
+
+## ScreenModel 规范
+
+- Dialog 状态放在 `State.dialog`，类型为 `sealed interface Dialog`
+- 选中状态用 `Set<Long>`（存 manga ID），通过 `mutate {}` 操作

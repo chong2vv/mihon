@@ -1,0 +1,43 @@
+---
+description: 数据库操作规范 - SQLDelight 查询、Repository 模式、迁移
+globs: "**/*.sq,**/*.sqm,**/data/**/*.kt,**/domain/**/repository/*.kt"
+alwaysApply: false
+---
+
+# 数据库操作规范
+
+## 添加新查询
+
+1. 在 `data/src/main/sqldelight/tachiyomi/data/*.sq` 中添加 SQL
+2. 在 `domain/.../repository/` 接口中添加方法
+3. 在 `data/.../RepositoryImpl` 中实现
+4. 如需新用例，在 `domain/.../interactor/` 下创建
+5. 在 `DomainModule.kt` 中注册 DI
+
+```kotlin
+// 响应式订阅
+fun getXxxAsFlow(): Flow<List<Xxx>>
+// 一次性操作
+suspend fun getXxx(): List<Xxx>
+```
+
+## SQL 规范
+
+- 查询名驼峰：`getLocalManga`, `deleteLocalMangaById`
+- DELETE/UPDATE 必须有 WHERE 条件防止误操作
+- 参数用 `:paramName` 格式
+
+## 数据库迁移
+
+修改 View（如 `updatesView`）需要创建迁移文件 `data/src/main/sqldelight/tachiyomi/migrations/{N}.sqm`，同时更新 View 定义文件。
+
+## Repository 实现
+
+```kotlin
+// Flow 订阅
+handler.subscribeToList { xxxQueries.getXxx(XxxMapper::mapXxx) }
+// 一次性查询
+handler.awaitList { xxxQueries.getXxx(XxxMapper::mapXxx) }
+// 写操作
+handler.await { xxxQueries.deleteXxx(id) }
+```

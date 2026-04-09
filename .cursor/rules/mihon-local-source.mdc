@@ -1,0 +1,40 @@
+---
+description: 本地图源（Local Source）开发规则 - 数据流、同步、缓存一致性
+globs: "**/source-local/**/*.kt,**/browse/source/browse/*.kt"
+alwaysApply: false
+---
+
+# 本地图源开发规则
+
+## 数据流（与远程图源不同）
+
+```
+文件系统 → LocalMangaSyncService.sync() → SQLite (source=0) → GetLocalManga.subscribe() → localMangaFlow → LocalBrowseSourceContent
+```
+
+本地图源**不使用 Paging**，直接从 DB Flow 获取 `List<Manga>` 渲染。
+
+## 缓存一致性
+
+修改文件系统后必须确保：
+
+```kotlin
+(source as? LocalSource)?.invalidateCache()  // 清除目录缓存
+doSyncLocalManga()                            // 重新同步 DB
+```
+
+sync 使用 `Mutex` 保护，不会并发执行。
+
+## 删除流程
+
+1. `localFileSystem.deleteMangaDirectory(manga.url)` — 删物理文件
+2. `updateManga(favorite = false)` — 取消收藏
+3. `mangaRepository.deleteLocalManga(manga.id)` — 删 DB 记录（SQL 要求 `favorite=0`）
+4. `invalidateCache()` — 清缓存
+
+## 常见陷阱
+
+- `UniFile.delete()` 不能删非空目录，需递归删除
+- 负缓存（cover 不存在）有 60s TTL
+- `deleteLocalMangaById` SQL 有 `AND favorite = 0` 条件，需先 unfavorite
+- `removeCovers()` 对本地漫画是 no-op（封面在漫画目录中）
