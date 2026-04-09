@@ -60,9 +60,12 @@ import tachiyomi.domain.manga.interactor.GetLibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.model.applyFilter
+import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracksPerManga
 import tachiyomi.domain.track.model.Track
+import tachiyomi.source.local.LocalSource
+import tachiyomi.source.local.io.LocalSourceFileSystem
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -85,6 +88,8 @@ class LibraryScreenModel(
     private val downloadManager: DownloadManager = Injekt.get(),
     private val downloadCache: DownloadCache = Injekt.get(),
     private val trackerManager: TrackerManager = Injekt.get(),
+    private val localFileSystem: LocalSourceFileSystem = Injekt.get(),
+    private val mangaRepository: MangaRepository = Injekt.get(),
 ) : StateScreenModel<LibraryScreenModel.State>(State()) {
 
     init {
@@ -542,22 +547,49 @@ class LibraryScreenModel(
      * @param mangas the list of manga to delete.
      * @param deleteFromLibrary whether to delete manga from library.
      * @param deleteChapters whether to delete downloaded chapters.
+     * @param deleteLocalFiles whether to delete local source files from disk.
      */
-    fun removeMangas(mangas: List<Manga>, deleteFromLibrary: Boolean, deleteChapters: Boolean) {
+    fun removeMangas(
+        mangas: List<Manga>,
+        deleteFromLibrary: Boolean,
+        deleteChapters: Boolean,
+        deleteLocalFiles: Boolean = false,
+    ) {
         screenModelScope.launchNonCancellable {
-            if (deleteFromLibrary) {
-                val toDelete = mangas.map {
-                    it.removeCovers(coverCache)
-                    MangaUpdate(
-                        favorite = false,
-                        id = it.id,
+            val localMangas = mangas.filter { it.isLocal() }
+            val nonLocalMangas = mangas.filterNot { it.isLocal() }
+
+            if (deleteLocalFiles && localMangas.isNotEmpty()) {
+                localMangas.forEach { manga ->
+                    localFileSystem.deleteMangaDirectory(manga.url)
+                    manga.removeCovers(coverCache)
+                    updateManga.await(
+                        MangaUpdate(
+                            favorite = false,
+                            id = manga.id,
+                        ),
                     )
+                    mangaRepository.deleteLocalManga(manga.id)
                 }
-                updateManga.awaitAll(toDelete)
+                (sourceManager.get(LocalSource.ID) as? LocalSource)?.invalidateCache()
+            }
+
+            if (deleteFromLibrary) {
+                val toUnfavorite = if (deleteLocalFiles) nonLocalMangas else mangas
+                if (toUnfavorite.isNotEmpty()) {
+                    val toDelete = toUnfavorite.map {
+                        it.removeCovers(coverCache)
+                        MangaUpdate(
+                            favorite = false,
+                            id = it.id,
+                        )
+                    }
+                    updateManga.awaitAll(toDelete)
+                }
             }
 
             if (deleteChapters) {
-                mangas.forEach { manga ->
+                nonLocalMangas.forEach { manga ->
                     val source = sourceManager.get(manga.source) as? HttpSource
                     if (source != null) {
                         downloadManager.deleteManga(manga, source)

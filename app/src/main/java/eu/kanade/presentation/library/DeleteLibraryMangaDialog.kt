@@ -18,15 +18,19 @@ import tachiyomi.presentation.core.i18n.stringResource
 @Composable
 fun DeleteLibraryMangaDialog(
     containsLocalManga: Boolean,
+    containsNonLocalManga: Boolean,
     onDismissRequest: () -> Unit,
-    onConfirm: (Boolean, Boolean) -> Unit,
+    onConfirm: (Boolean, Boolean, Boolean) -> Unit,
 ) {
     var list by remember {
         mutableStateOf(
             buildList<CheckboxState.State<StringResource>> {
                 add(CheckboxState.State.None(MR.strings.manga_from_library))
-                if (!containsLocalManga) {
+                if (containsNonLocalManga) {
                     add(CheckboxState.State.None(MR.strings.downloaded_chapters))
+                }
+                if (containsLocalManga) {
+                    add(CheckboxState.State.None(MR.strings.also_delete_local_source_files))
                 }
             },
         )
@@ -43,10 +47,10 @@ fun DeleteLibraryMangaDialog(
                 enabled = list.any { it.isChecked },
                 onClick = {
                     onDismissRequest()
-                    onConfirm(
-                        list[0].isChecked,
-                        list.getOrElse(1) { CheckboxState.State.None(0) }.isChecked,
-                    )
+                    val deleteFromLibrary = list[0].isChecked
+                    val deleteChapters = list.find { it.value == MR.strings.downloaded_chapters }?.isChecked ?: false
+                    val deleteLocalFiles = list.find { it.value == MR.strings.also_delete_local_source_files }?.isChecked ?: false
+                    onConfirm(deleteFromLibrary, deleteChapters, deleteLocalFiles)
                 },
             ) {
                 Text(text = stringResource(MR.strings.action_ok))
