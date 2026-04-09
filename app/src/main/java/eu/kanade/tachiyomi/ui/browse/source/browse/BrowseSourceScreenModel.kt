@@ -96,6 +96,8 @@ class BrowseSourceScreenModel(
 
     val source = sourceManager.getOrStub(sourceId)
 
+    private val syncMutex = Mutex()
+
     init {
         if (source is CatalogueSource) {
             mutableState.update {
@@ -134,8 +136,6 @@ class BrowseSourceScreenModel(
     } else {
         MutableStateFlow(emptyList())
     }
-
-    private val syncMutex = Mutex()
 
     fun syncLocalManga() {
         if (!isLocalSource) return
