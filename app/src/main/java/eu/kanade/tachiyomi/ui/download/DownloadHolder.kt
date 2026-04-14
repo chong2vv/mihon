@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.download
 
 import android.view.View
 import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.RecyclerView
 import eu.davidea.viewholders.FlexibleViewHolder
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.model.Download
@@ -23,6 +24,12 @@ class DownloadHolder(private val view: View, val adapter: DownloadAdapter) :
     init {
         setDragHandleView(binding.reorder)
         binding.menu.setOnClickListener { it.post { showPopupMenu(it) } }
+        binding.container.setOnClickListener {
+            val position = bindingAdapterPosition
+            if (position != RecyclerView.NO_POSITION) {
+                adapter.downloadItemListener.onItemClick(position)
+            }
+        }
     }
 
     private lateinit var download: Download

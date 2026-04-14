@@ -43,6 +43,13 @@ class DownloadQueueScreenModel(
      */
     private val progressJobs = mutableMapOf<Download, Job>()
 
+    private val _navigateToManga = MutableStateFlow<Long?>(null)
+    val navigateToManga = _navigateToManga.asStateFlow()
+
+    fun onNavigatedToManga() {
+        _navigateToManga.value = null
+    }
+
     val listener = object : DownloadAdapter.DownloadItemListener {
         /**
          * Called when an item is released from a drag.
@@ -57,6 +64,11 @@ class DownloadQueueScreenModel(
                 }
             }
             reorder(downloads)
+        }
+
+        override fun onItemClick(position: Int) {
+            val item = adapter?.getItem(position) as? DownloadItem ?: return
+            _navigateToManga.value = item.download.manga.id
         }
 
         /**

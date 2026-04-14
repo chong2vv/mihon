@@ -18,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -37,6 +38,7 @@ import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.core.archive.ZipWriter
 import nl.adaptivity.xmlutil.serialization.XML
@@ -124,7 +126,7 @@ class Downloader(
      * @return true if the downloader is started, false otherwise.
      */
     fun start(): Boolean {
-        if (isRunning || queueState.value.isEmpty()) {
+        if (queueState.value.isEmpty()) {
             return false
         }
 
@@ -133,6 +135,10 @@ class Downloader(
 
         isPaused = false
 
+        // Always cancel the old job before starting a new one.
+        // The old job can be suspended in collectLatest (waiting for flow emissions)
+        // and still report isActive=true even when all downloads have errored out.
+        cancelDownloaderJob()
         launchDownloaderJob()
 
         return pending.isNotEmpty()
@@ -244,14 +250,20 @@ class Downloader(
             if (download.status == Download.State.DOWNLOADED) {
                 removeFromQueue(download)
             }
-            if (areAllDownloadsFinished()) {
-                stop()
-            }
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
             logcat(LogPriority.ERROR, e)
             notifier.onError(e.message)
-            stop()
+        }
+
+        // Check completion outside the cancellable scope.
+        // The scheduler may cancel this job via collectLatest when re-evaluating
+        // active downloads after an ERROR; using NonCancellable ensures stop()
+        // is actually called when all downloads are finished.
+        withContext(NonCancellable) {
+            if (areAllDownloadsFinished()) {
+                stop()
+            }
         }
     }
 
@@ -369,33 +381,56 @@ class Downloader(
             download.status = Download.State.DOWNLOADING
 
             // Start downloading images, consider we can have downloaded images already
-            pageList.asFlow().flatMapMerge(concurrency = downloadPreferences.parallelPageLimit.get()) { page ->
-                flow {
-                    // Fetch image URL if necessary
-                    if (page.imageUrl.isNullOrEmpty()) {
-                        page.status = Page.State.LoadPage
-                        try {
-                            page.imageUrl = download.source.getImageUrl(page)
-                        } catch (e: Throwable) {
-                            page.status = Page.State.Error(e)
+            // Retry failed pages up to CHAPTER_RETRY_LIMIT times
+            var chapterRetry = 0
+            while (true) {
+                pageList.asFlow()
+                    .flatMapMerge(concurrency = downloadPreferences.parallelPageLimit.get()) { page ->
+                        flow {
+                            if (page.status == Page.State.Ready) {
+                                emit(page)
+                                return@flow
+                            }
+                            // Fetch image URL if necessary
+                            if (page.imageUrl.isNullOrEmpty()) {
+                                page.status = Page.State.LoadPage
+                                try {
+                                    page.imageUrl = download.source.getImageUrl(page)
+                                } catch (e: Throwable) {
+                                    page.status = Page.State.Error(e)
+                                }
+                            }
+
+                            withIOContext { getOrDownloadImage(page, download, tmpDir) }
+                            emit(page)
                         }
+                            .flowOn(Dispatchers.IO)
+                    }
+                    .collect {
+                        // Do when page is downloaded.
+                        notifier.onProgressChange(download)
                     }
 
-                    withIOContext { getOrDownloadImage(page, download, tmpDir) }
-                    emit(page)
-                }
-                    .flowOn(Dispatchers.IO)
-            }
-                .collect {
-                    // Do when page is downloaded.
-                    notifier.onProgressChange(download)
+                if (isDownloadSuccessful(download, tmpDir)) break
+
+                chapterRetry++
+                if (chapterRetry > CHAPTER_RETRY_LIMIT) {
+                    download.status = Download.State.ERROR
+                    return
                 }
 
-            // Do after download completes
-
-            if (!isDownloadSuccessful(download, tmpDir)) {
-                download.status = Download.State.ERROR
-                return
+                logcat(LogPriority.WARN) {
+                    "Chapter download incomplete, retry $chapterRetry/$CHAPTER_RETRY_LIMIT: ${download.chapter.name}"
+                }
+                // Clear imageUrl for failed pages so fresh URLs are fetched on retry.
+                // Many sources return temporary URLs that expire.
+                pageList.forEach { page ->
+                    if (page.status is Page.State.Error) {
+                        page.imageUrl = null
+                    }
+                }
+                val backoffSeconds = (1L shl chapterRetry).coerceAtMost(8)
+                delay(backoffSeconds * 1000)
             }
 
             createComicInfoFile(
@@ -575,12 +610,17 @@ class Downloader(
         val downloadPageCount = download.pages?.size ?: return false
 
         // Ensure that all pages have been downloaded
-        if (download.downloadedImages != downloadPageCount) {
+        val readyCount = download.downloadedImages
+        if (readyCount != downloadPageCount) {
+            logcat(LogPriority.DEBUG) {
+                "Download check: ${download.chapter.name} ready=$readyCount expected=$downloadPageCount"
+            }
             return false
         }
 
         // Ensure that the chapter folder has all the pages
-        val downloadedImagesCount = tmpDir.listFiles().orEmpty().count {
+        val allFiles = tmpDir.listFiles().orEmpty()
+        val downloadedImagesCount = allFiles.count {
             val fileName = it.name.orEmpty()
             when {
                 fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
@@ -588,6 +628,14 @@ class Downloader(
                 // Only count the first split page and not the others
                 fileName.contains("__") && !fileName.endsWith("__001.jpg") -> false
                 else -> true
+            }
+        }
+        if (downloadedImagesCount != downloadPageCount) {
+            logcat(LogPriority.WARN) {
+                "Download disk mismatch: ${download.chapter.name} " +
+                    "diskFiles=$downloadedImagesCount expected=$downloadPageCount " +
+                    "totalFiles=${allFiles.size} " +
+                    "files=${allFiles.mapNotNull { it.name }.joinToString()}"
             }
         }
         return downloadedImagesCount == downloadPageCount
@@ -728,6 +776,7 @@ class Downloader(
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
+        private const val CHAPTER_RETRY_LIMIT = 3
     }
 }
 

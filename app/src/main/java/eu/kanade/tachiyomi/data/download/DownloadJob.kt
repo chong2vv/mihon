@@ -12,13 +12,16 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.NetworkState
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.networkStateFlow
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combineTransform
 import kotlinx.coroutines.flow.launchIn
@@ -72,13 +75,32 @@ class DownloadJob(context: Context, workerParams: WorkerParameters) : CoroutineW
                 downloadPreferences.downloadOnlyOverWifi.changes(),
                 transform = { a, b -> emit(checkNetworkState(a, b)) },
             )
-                .onEach { networkCheck = it }
+                .onEach { newCheck ->
+                    val recovered = newCheck && !networkCheck
+                    networkCheck = newCheck
+                    if (recovered) {
+                        downloadManager.downloaderStart()
+                    }
+                }
                 .launchIn(this)
-        }
 
-        // Keep the worker running when needed
-        while (active) {
-            active = !isStopped && downloadManager.isRunning && networkCheck
+            var idleWithNetworkTicks = 0
+            while (!isStopped) {
+                delay(100)
+                val queue = downloadManager.queueState.value
+                if (queue.isEmpty()) break
+                if (queue.all { it.status == Download.State.DOWNLOADED }) break
+
+                if (!downloadManager.isRunning && networkCheck) {
+                    // Network is fine but downloader stopped — likely permanent failure
+                    idleWithNetworkTicks++
+                    if (idleWithNetworkTicks > 10) break // 1s grace period
+                } else {
+                    idleWithNetworkTicks = 0
+                }
+            }
+
+            coroutineContext.cancelChildren()
         }
 
         return Result.success()
